@@ -1,26 +1,26 @@
 # Training Configuration
 training:
-  epochs: 50
-  batch_size: 256
-  learning_rate: 0.001
+  epochs: 100  # Increased for better convergence
+  batch_size: 512  # Larger batch for RTX 5090
+  learning_rate: 0.0005  # Lower LR for more stable training
   weight_decay: 0.0001
   gradient_clip: 1.0
 
-# Model Configuration
+# Model Configuration - LARGE (6M params)
 model:
   input_size: 5  # OHLCV features
-  hidden_size: 128
-  num_layers: 2
-  num_heads: 4
-  dropout: 0.1
-  seq_length: 60  # Use 60 timesteps for prediction
+  hidden_size: 512  # Increased from 128
+  num_layers: 4  # Increased from 2
+  num_heads: 8  # Increased from 4
+  dropout: 0.15  # Slightly higher to prevent overfitting
+  seq_length: 120  # Doubled - more context for predictions
 
 # Data Configuration
 data:
   symbol: "EURUSD=X"
-  train_split: 0.8
-  val_split: 0.1
-  test_split: 0.1
+  train_split: 0.85  # More training data
+  val_split: 0.10
+  test_split: 0.05
   target_column: "Close"
 
 # Fetching Configuration
