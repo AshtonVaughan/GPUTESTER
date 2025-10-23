@@ -12,7 +12,7 @@ from tqdm import tqdm
 from utils import load_config, ensure_dirs_exist, retry_with_backoff
 
 
-def fetch_data_batch(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+def fetch_data_batch(symbol: str, start_date: str, end_date: str, interval: str = '1h') -> pd.DataFrame:
     """
     Fetch data for a specific date range.
 
@@ -20,14 +20,15 @@ def fetch_data_batch(symbol: str, start_date: str, end_date: str) -> pd.DataFram
         symbol: Ticker symbol
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
+        interval: Data interval ('1h', '1d', etc.)
 
     Returns:
         DataFrame with OHLCV data
     """
-    print(f"Fetching {symbol} from {start_date} to {end_date}...")
+    print(f"Fetching {symbol} from {start_date} to {end_date} (interval: {interval})...")
 
     ticker = yf.Ticker(symbol)
-    data = ticker.history(start=start_date, end=end_date, interval='1h')
+    data = ticker.history(start=start_date, end=end_date, interval=interval)
 
     if data.empty:
         raise ValueError(f"No data retrieved for {symbol} in range {start_date} to {end_date}")
@@ -51,49 +52,68 @@ def fetch_eurusd_data(config: dict) -> pd.DataFrame:
     retry_delay = config['fetching']['retry_delay']
 
     # Calculate date ranges
+    # Yahoo Finance hourly data limit is 730 days, use 700 to be safe
     end_date = datetime.now()
-    # Fetch maximum available history (Yahoo typically has ~2 years of hourly data)
-    start_date = end_date - timedelta(days=730)  # ~2 years
+    lookback_days = 700  # Safe margin within Yahoo's 730-day limit
+    start_date = end_date - timedelta(days=lookback_days)
 
     print(f"\n{'='*60}")
     print(f"Fetching {symbol} data from Yahoo Finance")
     print(f"Date range: {start_date.date()} to {end_date.date()}")
+    print(f"Lookback: {lookback_days} days")
     print(f"{'='*60}\n")
 
-    all_data = []
-    current_date = start_date
+    # Try hourly data first, fall back to daily if needed
+    intervals_to_try = ['1h', '1d']
 
-    # Create batches
-    batches = []
-    while current_date < end_date:
-        batch_end = min(current_date + timedelta(days=batch_days), end_date)
-        batches.append((current_date.strftime('%Y-%m-%d'), batch_end.strftime('%Y-%m-%d')))
-        current_date = batch_end
+    for interval in intervals_to_try:
+        print(f"Attempting to fetch {interval} interval data...\n")
+        all_data = []
+        current_date = start_date
 
-    # Fetch data in batches with progress bar
-    for start, end in tqdm(batches, desc="Fetching batches"):
-        def fetch_fn():
-            return fetch_data_batch(symbol, start, end)
+        # Create batches
+        batches = []
+        while current_date < end_date:
+            batch_end = min(current_date + timedelta(days=batch_days), end_date)
+            batches.append((current_date.strftime('%Y-%m-%d'), batch_end.strftime('%Y-%m-%d')))
+            current_date = batch_end
 
-        try:
-            # Use retry logic for each batch
-            batch_data = retry_with_backoff(
-                fetch_fn,
-                max_retries=max_retries,
-                delay=retry_delay
-            )
-            all_data.append(batch_data)
+        # Fetch data in batches with progress bar
+        success_count = 0
+        for start, end in tqdm(batches, desc=f"Fetching {interval} batches"):
+            def fetch_fn():
+                return fetch_data_batch(symbol, start, end, interval=interval)
 
-            # Small delay between batches to be respectful to Yahoo's servers
-            time.sleep(1)
+            try:
+                # Use retry logic for each batch
+                batch_data = retry_with_backoff(
+                    fetch_fn,
+                    max_retries=max_retries,
+                    delay=retry_delay
+                )
+                all_data.append(batch_data)
+                success_count += 1
 
-        except Exception as e:
-            print(f"\nWarning: Failed to fetch batch {start} to {end}: {str(e)}")
-            print("Continuing with available data...")
-            continue
+                # Small delay between batches to be respectful to Yahoo's servers
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"\nWarning: Failed to fetch batch {start} to {end}: {str(e)}")
+                print("Continuing with available data...")
+                continue
+
+        # If we got some data with this interval, use it
+        if all_data:
+            print(f"\nSuccessfully fetched {success_count}/{len(batches)} batches with {interval} interval")
+            break
+        else:
+            print(f"\nFailed to fetch data with {interval} interval, trying next option...\n")
 
     if not all_data:
-        raise ValueError("Failed to fetch any data. Please check your internet connection and try again.")
+        raise ValueError(
+            "Failed to fetch any data with any interval. "
+            "Please check your internet connection and try again."
+        )
 
     # Combine all batches
     print("\nCombining batches...")
@@ -110,6 +130,7 @@ def fetch_eurusd_data(config: dict) -> pd.DataFrame:
     print(f"Data fetching completed!")
     print(f"Total rows: {len(df):,}")
     print(f"Date range: {df.index[0]} to {df.index[-1]}")
+    print(f"Interval: {interval}")
     print(f"Columns: {list(df.columns)}")
     print(f"{'='*60}\n")
 
