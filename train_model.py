@@ -204,8 +204,7 @@ def train_model(config: dict):
         optimizer,
         mode='min',
         factor=0.5,
-        patience=5,
-        verbose=True
+        patience=5
     )
 
     # Early stopping
@@ -233,7 +232,11 @@ def train_model(config: dict):
         val_loss = validate(model, val_loader, criterion, device)
 
         # Update learning rate
+        old_lr = optimizer.param_groups[0]['lr']
         scheduler.step(val_loss)
+        new_lr = optimizer.param_groups[0]['lr']
+        if new_lr != old_lr:
+            print(f"\nLearning rate reduced: {old_lr:.6f} -> {new_lr:.6f}")
 
         # Save best model
         if val_loss < best_val_loss:
